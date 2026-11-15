@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>多服务 HTTP 契约全链路治理方案</title>
+<style>
+  :root {
+    --primary: #1a73e8;
+    --bg: #f8f9fa;
+    --card: #ffffff;
+    --border: #e0e0e0;
+    --text: #202124;
+    --text-secondary: #5f6368;
+    --code-bg: #f1f3f4;
+    --accent: #e8f0fe;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+  
+  header {
+    background: linear-gradient(135deg, var(--primary), #0d47a1);
+    color: white;
+    padding: 3rem 2rem;
+    border-radius: 16px;
+    margin-bottom: 2rem;
+  }
+  header h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+  header .meta { opacity: 0.85; font-size: 0.95rem; }
+  
+  nav {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 2rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  nav h3 { margin-bottom: 0.5rem; color: var(--primary); }
+  nav ul { list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  nav a {
+    color: var(--primary);
+    text-decoration: none;
+    padding: 0.3rem 0.8rem;
+    background: var(--accent);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+  }
+  nav a:hover { background: var(--primary); color: white; }
+  
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+  }
+  section h2 {
+    color: var(--primary);
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+  section h3 { margin: 1.5rem 0 0.8rem; color: var(--text); }
+  section h4 { margin: 1rem 0 0.5rem; color: var(--text-secondary); }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+  }
+  th { background: var(--accent); color: var(--primary); font-weight: 600; }
+  tr:hover { background: var(--bg); }
+  
+  pre {
+    background: var(--code-bg);
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+    font-size: 0.85rem;
+  }
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85rem;
+  }
+  p code, li code, td code {
+    background: var(--code-bg);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+  }
+  
+  .arch-diagram {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+  
+  .principle-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .principle-card {
+    background: var(--accent);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+  .principle-card strong { color: var(--primary); }
+  
+  .priority-table tr td:first-child {
+    font-weight: 600;
+    color: var(--primary);
+  }
+  
+  .summary-box {
+    background: linear-gradient(135deg, #e8f0fe, #f3e8ff);
+    border-left: 4px solid var(--primary);
+    padding: 1.5rem;
+    border-radius: 0 12px 12px 0;
+    margin: 1.5rem 0;
+  }
+  .summary-box p { font-size: 1.05rem; }
+  
+  ul, ol { padding-left: 1.5rem; margin: 0.5rem 0; }
+  li { margin: 0.3rem 0; }
+  
+  footer {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+  }
+  
+  @media (max-width: 768px) {
+    .container { padding: 1rem; }
+    header { padding: 2rem 1rem; }
+    nav ul { flex-direction: column; }
+    nav a { display: block; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<header>
+  <h1>🏗️ 多服务 HTTP 契约全链路治理方案</h1>
+  <div class="meta">
+    版本 1.0.0 ｜ 适用：Spring Boot 4 + Java 21 + OpenAPI 3.1 ｜ 2026-01
+  </div>
+</header>
+
+<nav>
+  <h3>📑 目录导航</h3>
+  <ul>
+    <li><a href="#arch">架构总览</a></li>
+    <li><a href="#repo">仓库结构</a></li>
+    <li><a href="#downstream">下游治理</a></li>
+    <li><a href="#upstream">上游治理</a></li>
+    <li><a href="#test">测试策略</a></li>
+    <li><a href="#ci">CI/CD 流水线</a></li>
+    <li><a href="#version">版本矩阵</a></li>
+    <li><a href="#deprecate">弃用流程</a></li>
+    <li><a href="#tools">工具链</a></li>
+    <li><a href="#priority">落地优先级</a></li>
+    <li><a href="#appendix">附录</a></li>
+  </ul>
+</nav>
+
+<!-- 架构总览 -->
+<section id="arch">
+  <h2>一、架构总览</h2>
+  <h3>核心分层</h3>
+  <table>
+    <tr><th>层</th><th>方向</th><th>你控制吗</th><th>治理方式</th></tr>
+    <tr><td>下游契约</td><td>你 → 消费者</td><td>✅ 完全控制</td><td>OpenAPI First + 版本化 + 门禁</td></tr>
+    <tr><td>适配层</td><td>上游 → 你</td><td>⚠️ 隔离变化</td><td>Adapter + 快照 + WireMock</td></tr>
+    <tr><td>领域层</td><td>内部</td><td>✅ 完全控制</td><td>不暴露，不依赖外部模型</td></tr>
+  </table>
+  
+  <h3>架构图</h3>
+  <pre class="arch-diagram">┌─────────────────────────────────────────────────────────────┐
+│          文档站 / SDK 发布                                    │
+└──────────────────────┬──────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│              中央契约仓库（api-contracts）                      │
+│  ┌─────────────┐ ┌─────────────┐ ┌──────────┐ ┌──────────┐  │
+│  │ downstream/ │ │  upstream/  │ │ shared/  │ │consumers/│  │
+│  │ 你提供的 API │ │ 你调用的 API │ │公共Schema│ │消费者契约│  │
+│  └──────┬──────┘ └──────┬──────┘ └──────────┘ └──────────┘  │
+└─────────┼───────────────┼────────────────────────────────────┘
+          ▼               ▲
+┌─────────────────┐ ┌─────────────────┐
+│  你的服务        │ │  你的服务        │
+│  Controller(出) │ │  Adapter(入)    │
+└────────┬────────┘ └────────┬────────┘
+         ▼                   ▲
+┌─────────────────┐   ┌─────────────────┐
+│ 下游消费者       │   │ 上游 HTTP 服务   │
+│ (前端/其他服务)  │   │                 │
+└─────────────────┘   └─────────────────┘</pre>
+  
+  <div class="summary-box">
+    <p><strong>核心哲学：</strong>契约是产品，不是文档。每个 API 有独立版本、独立生命周期、独立消费者。</p>
+  </div>
+</section>
+
+<!-- 仓库结构 -->
+<section id="repo">
+  <h2>二、仓库结构</h2>
+  <pre><code>api-contracts/                              ← 独立 Git 仓库
+├── spectral.yaml                           # 全局 lint 规则
+├── versions.yaml                           # 版本矩阵
+├── downstream/                             # ═══ 你提供的 API ═══
+│   └── user-service/
+│       ├── v1/openapi.yaml                 # 唯一真相源
+│       ├── v1/portman.config.yml           # Postman 集合生成配置
+│       └── v2/openapi.yaml
+├── upstream/                               # ═══ 你调用的 API ═══
+│   ├── auth-service/external-openapi.yaml  # 上游快照
+│   ├── payment-gateway/external-openapi.yaml
+│   └── thirdparty-sms/manual-openapi.yaml  # 手写最小版
+├── shared/                                 # 公共 Schema
+│   ├── common-types.yaml
+│   └── auth.yaml
+├── consumers/                              # 消费者期望
+├── scripts/                                # 自动化脚本
+└── .github/workflows/                      # CI 配置</code></pre>
+</section>
+
+<!-- 下游治理 -->
+<section id="downstream">
+  <h2>三、下游契约治理（你提供的 API）</h2>
+  <h3>开发流程</h3>
+  <ol>
+    <li>改 <code>openapi.yaml</code>（加字段/加端点）</li>
+    <li><code>spectral</code> lint（规范检查）</li>
+    <li><code>oasdiff breaking</code>（破坏性检测）</li>
+    <li>生成 DTO + API 接口（openapi-generator）</li>
+    <li>实现 Controller + Mapper</li>
+    <li>MockMvc 契约测试</li>
+    <li>生成 Postman 集合（Portman）</li>
+    <li>合并 → 自动发布文档 + 通知消费者</li>
+  </ol>
+  
+  <h3>版本策略</h3>
+  <table>
+    <tr><th>状态</th><th>含义</th><th>HTTP Header</th></tr>
+    <tr><td>stable</td><td>当前推荐</td><td>—</td></tr>
+    <tr><td>deprecated</td><td>不推荐新用</td><td><code>Deprecation: true</code></td></tr>
+    <tr><td>sunset</td><td>即将下线</td><td><code>Sunset: &lt;date&gt;</code></td></tr>
+    <tr><td>retired</td><td>已关闭</td><td><code>410 Gone</code></td></tr>
+  </table>
+  
+  <h3>兼容性规则</h3>
+  <table>
+    <tr><th>变更类型</th><th>允许</th><th>需 MAJOR</th></tr>
+    <tr><td>加可选字段</td><td>✅</td><td>否</td></tr>
+    <tr><td>加必填字段</td><td>❌</td><td>是</td></tr>
+    <tr><td>删字段</td><td>❌</td><td>是</td></tr>
+    <tr><td>改字段类型</td><td>❌</td><td>是</td></tr>
+    <tr><td>改语义</td><td>❌</td><td>是</td></tr>
+    <tr><td>加端点</td><td>✅</td><td>否</td></tr>
+    <tr><td>删端点</td><td>❌</td><td>是</td></tr>
+  </table>
+</section>
+
+<!-- 上游治理 -->
+<section id="upstream">
+  <h2>四、上游契约治理（你调用的 API）</h2>
+  <h3>三层隔离设计</h3>
+  <pre><code>上游 HTTP API
+    ↓ HTTP
+① 上游 DTO（从 external-openapi.yaml 生成）
+    ↓
+② Adapter 层（MapStruct，隔离字段映射）
+   @Mapper unmappedTargetPolicy = WARN
+    ↓
+③ 领域模型（你的 Entity / Domain Object）
+   不依赖任何外部 DTO 类型</code></pre>
+   
+  <h3>Adapter 示例</h3>
+  <pre><code>@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.WARN)
+public interface AuthAdapter {
+    @Mapping(source = "userId", target = "externalId")
+    @Mapping(source = "displayName", target = "name")
+    @Mapping(source = "emailAddress", target = "email")
+    UserEntity toEntity(AuthUserDTO dto);
+}</code></pre>
+  
+  <h3>上游变化检测脚本</h3>
+  <pre><code>#!/bin/bash
+SERVICE=$1; REMOTE_URL=$2
+LOCAL_FILE="upstream/$SERVICE/external-openapi.yaml"
+curl -s "$REMOTE_URL" -o /tmp/upstream-new.yaml
+CHANGES=$(npx oasdiff diff "$LOCAL_FILE" /tmp/upstream-new.yaml --format text)
+if [ -n "$CHANGES" ]; then
+  echo "⚠️ Upstream $SERVICE changed!" && echo "$CHANGES"
+fi</code></pre>
+</section>
+
+<!-- 测试策略 -->
+<section id="test">
+  <h2>五、测试策略（四层覆盖）</h2>
+  <table>
+    <tr><th>层</th><th>工具</th><th>验证内容</th></tr>
+    <tr><td>第 1 层：单元测试</td><td>MapStruct / JUnit</td><td>Mapper/Adapter 纯逻辑</td></tr>
+    <tr><td>第 2 层：下游契约</td><td>MockMvc + swagger-request-validator</td><td>响应符合 schema</td></tr>
+    <tr><td>第 3 层：上游适配</td><td>WireMock + Adapter</td><td>模拟上游响应 → 映射正确</td></tr>
+    <tr><td>第 4 层：端到端</td><td>Newman（Postman 集合）</td><td>完整依赖链</td></tr>
+  </table>
+  
+  <h3>WireMock 测试示例</h3>
+  <pre><code>@SpringBootTest
+@AutoConfigureWireMock(port = 0)
+class AuthAdapterWireMockTest {
+    @Autowired AuthAdapter adapter;
+    @Autowired AuthClient client;
+
+    @Test
+    void shouldMapAuthUserToEntity() {
+        stubFor(get("/v1/users/123")
+            .willReturn(okJson("""
+                {"userId":"123","displayName":"张三","emailAddress":"zhang@test.com"}
+            """)));
+        AuthUserDTO dto = client.getUserById("123");
+        UserEntity entity = adapter.toEntity(dto);
+        assertThat(entity.getExternalId()).isEqualTo("123");
+        assertThat(entity.getName()).isEqualTo("张三");
+    }
+}</code></pre>
+</section>
+
+<!-- CI/CD -->
+<section id="ci">
+  <h2>六、CI/CD 流水线</h2>
+  <h3>PR 门禁（downstream-pr.yml）</h3>
+  <ul>
+    <li>Spectral lint → 规范检查</li>
+    <li>oasdiff breaking → 破坏性变更检测</li>
+    <li>生成 DTO + 集合</li>
+    <li>MockMvc 契约测试</li>
+    <li>Newman 集合测试</li>
+    <li>消费者影响分析</li>
+  </ul>
+  
+  <h3>上游同步（upstream-sync.yml）</h3>
+  <ul>
+    <li>定时（每天）拉取上游最新 openapi</li>
+    <li>diff 对比本地快照</li>
+    <li>有变化 → 创建 Issue / 发告警</li>
+  </ul>
+  
+  <h3>发布（release.yml）</h3>
+  <ul>
+    <li>打 tag → 生成产物</li>
+    <li>发布文档站</li>
+    <li>生成 SDK</li>
+    <li>通知消费者</li>
+  </ul>
+</section>
+
+<!-- 版本矩阵 -->
+<section id="version">
+  <h2>七、版本矩阵</h2>
+  <pre><code>downstream:
+  user-service:
+    current: v2.1.0
+    versions:
+      v1:
+        status: deprecated
+        sunset: 2025-06-01
+        consumers: [web-app, mobile-app]
+      v2:
+        status: stable
+        consumers: [web-app, mobile-app, partner-api]
+
+upstream:
+  auth-service:
+    source: https://auth.internal/v3/api-docs
+    pinnedVersion: v1.2.0
+    adapterPackage: com.example.user.adapter.AuthAdapter</code></pre>
+</section>
+
+<!-- 弃用流程 -->
+<section id="deprecate">
+  <h2>八、弃用与下线流程</h2>
+  <ol>
+    <li><code>openapi.yaml</code> 加 <code>x-deprecated: true</code> + <code>x-sunset-date</code></li>
+    <li>运行时响应头：<code>Deprecation</code> + <code>Sunset</code> + <code>Link</code></li>
+    <li>文档站标 deprecated 横幅</li>
+    <li>通知所有消费者</li>
+    <li>给消费者迁移窗口（建议 90 天）</li>
+    <li>窗口期后返回 <code>410 Gone</code></li>
+    <li>移除代码 + 文档</li>
+  </ol>
+</section>
+
+<!-- 工具链 -->
+<section id="tools">
+  <h2>九、工具链汇总</h2>
+  <table>
+    <tr><th>工具</th><th>用途</th></tr>
+    <tr><td>openapi-generator 7.26.0</td><td>生成 DTO + API 接口</td></tr>
+    <tr><td>spectral</td><td>openapi.yaml 规范 lint</td></tr>
+    <tr><td>oasdiff</td><td>破坏性变更检测</td></tr>
+    <tr><td>portman</td><td>生成带依赖脚本的 Postman 集合</td></tr>
+    <tr><td>newman</td><td>CI 跑 Postman 集合</td></tr>
+    <tr><td>wiremock</td><td>模拟上游 HTTP 服务</td></tr>
+    <tr><td>mapstruct 1.6.0</td><td>DTO ↔ Entity 映射</td></tr>
+    <tr><td>springdoc-openapi</td><td>运行时 /v3/api-docs</td></tr>
+    <tr><td>redocly / fern</td><td>静态文档站生成</td></tr>
+  </table>
+</section>
+
+<!-- 落地优先级 -->
+<section id="priority">
+  <h2>十、落地优先级</h2>
+  <table class="priority-table">
+    <tr><td>P0</td><td>下游 openapi.yaml + 代码生成 + MapStruct</td><td>第 1 周</td></tr>
+    <tr><td>P1</td><td>上游快照 + Adapter 层 + WireMock 测试</td><td>第 2 周</td></tr>
+    <tr><td>P2</td><td>Spectral + oasdiff + Portman 集合生成</td><td>第 3 周</td></tr>
+    <tr><td>P3</td><td>CI 流水线 + Newman + 文档站</td><td>第 4 周</td></tr>
+    <tr><td>P4</td><td>消费者契约 + Pact + 版本矩阵治理</td><td>第 5-6 周</td></tr>
+  </table>
+</section>
+
+<!-- 附录 -->
+<section id="appendix">
+  <h2>附录 A：核心原则速查</h2>
+  <div class="principle-grid">
+    <div class="principle-card"><strong>单一真相源</strong><br>openapi.yaml 是合约，不是文档</div>
+    <div class="principle-card"><strong>版本独立</strong><br>每个服务、每个版本独立目录</div>
+    <div class="principle-card"><strong>变更可追踪</strong><br>所有修改走 PR + oasdiff</div>
+    <div class="principle-card"><strong>消费者优先</strong><br>破坏性变更必须通知 + 给迁移方案</div>
+    <div class="principle-card"><strong>产物自动生成</strong><br>集合、文档、SDK 都是构建产物</div>
+    <div class="principle-card"><strong>弃用有流程</strong><br>deprecated → sunset → retired</div>
+    <div class="principle-card"><strong>上下游分离</strong><br>不同目录、不同生命周期</div>
+    <div class="principle-card"><strong>上游变化不传染</strong><br>Adapter 层隔离</div>
+    <div class="principle-card"><strong>测试双覆盖</strong><br>MockMvc（下游）+ WireMock（上游）</div>
+  </div>
+  
+  <div class="summary-box" style="margin-top: 2rem;">
+    <p><strong>一句话总结：</strong>下游契约是源码，上游契约是依赖，Adapter 是防火墙，CI 是守门员。所有东西从 openapi.yaml 生成，不手写重复结构，不手改 Postman 集合，不把上游 DTO 泄漏到领域层。</p>
+  </div>
+</section>
+
+<footer>
+  <p>多服务 HTTP 契约全链路治理方案 v1.0.0 ｜ Generated 2026-01</p>
+</footer>
+
+</div>
+
+</body>
+</html>

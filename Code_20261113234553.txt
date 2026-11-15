@@ -1,0 +1,370 @@
+
+### 核心设计哲学
+
+> **契约是产品，不是文档。每个 API 有独立版本、独立生命周期、独立消费者。**
+
+---
+
+## 二、仓库结构
+
+### Monorepo 模式（推荐）
+
+\`\`\`
+api-contracts/                              ← 独立 Git 仓库
+├── README.md
+├── spectral.yaml                           # 全局 lint 规则
+├── versions.yaml                           # 版本矩阵（下游+上游）
+│
+├── downstream/                             # ═══ 你提供的 API ═══
+│   └── user-service/
+│       ├── v1/
+│       │   ├── openapi.yaml                # 唯一真相源
+│       │   ├── portman.config.yml          # 生成 Postman 集合配置
+│       │   └── CHANGELOG.md
+│       └── v2/
+│           └── openapi.yaml
+│
+├── upstream/                               # ═══ 你调用的 API ═══
+│   ├── auth-service/
+│   │   ├── external-openapi.yaml           # 上游快照（定期同步）
+│   │   ├── adapter-mapping.yaml            # 字段映射说明
+│   │   └── CHANGELOG.md
+│   ├── payment-gateway/
+│   │   └── external-openapi.yaml
+│   └── thirdparty-sms/
+│       └── manual-openapi.yaml             # 对方没 openapi，手写最小版
+│
+├── shared/                                 # ═══ 公共 Schema ═══
+│   ├── common-types.yaml                   # Pagination, Error, Money
+│   ├── auth.yaml                          # securitySchemes
+│   └── enums.yaml
+│
+├── consumers/                              # ═══ 消费者期望 ═══
+│   ├── web-app/
+│   │   └── user-service-v1.expectations.yaml
+│   └── mobile-app/
+│       └── user-service-v1.expectations.yaml
+│
+├── scripts/
+│   ├── generate-downstream.sh
+│   ├── sync-upstream.sh
+│   ├── diff-upstream.sh
+│   ├── diff-downstream.sh
+│   ├── publish-docs.sh
+│   └── newman-ci.sh
+│
+└── .github/workflows/
+    ├── downstream-pr.yml
+    ├── upstream-sync.yml
+    └── release.yml
+\`\`\`
+
+---
+
+## 三、下游契约治理
+
+### 3.1 开发流程
+
+1. 改 `openapi.yaml`（加字段/加端点）
+2. `spectral` lint（规范检查）
+3. `oasdiff breaking`（破坏性检测）
+4. 生成 DTO + API 接口（openapi-generator）
+5. 实现 Controller + Mapper
+6. MockMvc 契约测试
+7. 生成 Postman 集合（Portman）
+8. 合并 → 自动发布文档 + 通知消费者
+
+### 3.2 版本策略
+
+| 版本状态 | 含义 | HTTP Header |
+|---------|------|-------------|
+| `stable` | 当前推荐 | — |
+| `deprecated` | 不推荐新用 | `Deprecation: true` |
+| `sunset` | 即将下线 | `Sunset: <date>` |
+| `retired` | 已关闭 | `410 Gone` |
+
+### 3.3 兼容性规则
+
+| 变更类型 | 允许 | MAJOR |
+|---------|------|-------|
+| 加可选字段 | ✅ | 否 |
+| 加必填字段 | ❌ | 是 |
+| 删字段 | ❌ | 是 |
+| 改字段类型 | ❌ | 是 |
+| 改语义 | ❌ | 是 |
+| 加端点 | ✅ | 否 |
+| 删端点 | ❌ | 是 |
+
+### 3.4 代码生成配置
+
+\`\`\`xml
+<plugin>
+    <groupId>org.openapitools</groupId>
+    <artifactId>openapi-generator-maven-plugin</artifactId>
+    <version>7.26.0</version>
+    <executions>
+        <execution>
+            <id>generate-user-api</id>
+            <goals><goal>generate</goal></goals>
+            <configuration>
+                <inputSpec>${project.basedir}/src/main/resources/openapi.yaml</inputSpec>
+                <generatorName>spring</generatorName>
+                <configOptions>
+                    <useSpringBoot4>true</useSpringBoot4>
+                    <useJackson3>true</useJackson3>
+                    <interfaceOnly>true</interfaceOnly>
+                    <useTags>true</useTags>
+                </configOptions>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+\`\`\`
+
+---
+
+## 四、上游契约治理
+
+### 4.1 核心设计：三层隔离
+
+\`\`\`
+┌─────────────────────────────────────────────────────────┐
+│ 上游 HTTP API                                           │
+└───────────────────────┬─────────────────────────────────┘
+                        │ HTTP
+┌───────────────────────▼─────────────────────────────────┐
+│ ① 上游 DTO（从 external-openapi.yaml 生成）              │
+│    com.example.upstream.xxx.dto.*                       │
+└───────────────────────┬─────────────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────────┐
+│ ② Adapter 层（MapStruct，隔离字段映射）                   │
+│    @Mapper unmappedTargetPolicy = WARN                  │
+└───────────────────────┬─────────────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────────┐
+│ ③ 领域模型（你的 Entity / Domain Object）                 │
+│    不依赖任何外部 DTO 类型                                │
+└─────────────────────────────────────────────────────────┘
+\`\`\`
+
+### 4.2 Adapter 代码示例
+
+\`\`\`java
+@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.WARN)
+public interface AuthAdapter {
+    @Mapping(source = "userId", target = "externalId")
+    @Mapping(source = "displayName", target = "name")
+    @Mapping(source = "emailAddress", target = "email")
+    UserEntity toEntity(AuthUserDTO dto);
+}
+\`\`\`
+
+### 4.3 上游变化检测
+
+\`\`\`bash
+#!/bin/bash
+# sync-upstream.sh
+SERVICE=$1
+REMOTE_URL=$2
+LOCAL_FILE="upstream/$SERVICE/external-openapi.yaml"
+
+curl -s "$REMOTE_URL" -o /tmp/upstream-new.yaml
+CHANGES=$(npx oasdiff diff "$LOCAL_FILE" /tmp/upstream-new.yaml --format text)
+
+if [ -n "$CHANGES" ]; then
+  echo "⚠️ Upstream $SERVICE changed!"
+  echo "$CHANGES"
+fi
+\`\`\`
+
+### 4.4 上游没 OpenAPI 怎么办
+
+手写最小 openapi.yaml，给自己一个结构化约束：
+
+\`\`\`yaml
+openapi: 3.1.0
+info:
+  title: SMS Provider API
+  version: 1.0.0
+  description: 手动维护，对方无 OpenAPI
+paths:
+  /sms/send:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile, content]
+              properties:
+                mobile: { type: string }
+                content: { type: string }
+      responses:
+        '200':
+          description: 成功
+\`\`\`
+
+---
+
+## 五、测试策略
+
+### 四层覆盖
+
+| 层 | 工具 | 验证内容 |
+|---|---|---|
+| 第 1 层：单元测试 | MapStruct / JUnit | Mapper/Adapter 纯逻辑 |
+| 第 2 层：下游契约 | MockMvc + swagger-request-validator | 响应符合 schema |
+| 第 3 层：上游适配 | WireMock + Adapter | 模拟上游响应 → 映射正确 |
+| 第 4 层：端到端 | Newman（Postman 集合） | 完整依赖链 |
+
+### WireMock 测试示例
+
+\`\`\`java
+@SpringBootTest
+@AutoConfigureWireMock(port = 0)
+class AuthAdapterWireMockTest {
+
+    @Autowired AuthAdapter adapter;
+    @Autowired AuthClient client;
+
+    @Test
+    void shouldMapAuthUserToEntity() {
+        stubFor(get("/v1/users/123")
+            .willReturn(okJson("""
+                {"userId":"123","displayName":"张三","emailAddress":"zhang@test.com"}
+            """)));
+
+        AuthUserDTO dto = client.getUserById("123");
+        UserEntity entity = adapter.toEntity(dto);
+
+        assertThat(entity.getExternalId()).isEqualTo("123");
+        assertThat(entity.getName()).isEqualTo("张三");
+    }
+}
+\`\`\`
+
+### Newman CI
+
+\`\`\`bash
+newman run target/postman/user-service.collection.json \
+  --env-var "baseUrl=http://localhost:${test.port}" \
+  --reporters cli,junit \
+  --reporter-junit-export target/surefire-reports/newman.xml \
+  --bail
+\`\`\`
+
+---
+
+## 六、CI/CD 流水线
+
+### PR 门禁（downstream-pr.yml）
+
+- Spectral lint
+- oasdiff breaking 检测
+- 生成 DTO + 集合
+- MockMvc 契约测试
+- Newman 集合测试
+- 消费者影响分析
+
+### 上游同步（upstream-sync.yml）
+
+- 定时（每天）拉取上游最新 openapi
+- diff 对比本地快照
+- 有变化 → 创建 Issue / 发告警
+
+### 发布（release.yml）
+
+- 打 tag → 生成产物
+- 发布文档站
+- 生成 SDK
+- 通知消费者
+
+---
+
+## 七、版本矩阵
+
+\`\`\`yaml
+downstream:
+  user-service:
+    current: v2.1.0
+    versions:
+      v1:
+        status: deprecated
+        sunset: 2025-06-01
+        consumers: [web-app, mobile-app]
+      v2:
+        status: stable
+        consumers: [web-app, mobile-app, partner-api]
+
+upstream:
+  auth-service:
+    source: https://auth.internal/v3/api-docs
+    pinnedVersion: v1.2.0
+    adapterPackage: com.example.user.adapter.AuthAdapter
+\`\`\`
+
+---
+
+## 八、弃用与下线流程
+
+1. openapi.yaml 加 `x-deprecated: true` + `x-sunset-date`
+2. 运行时响应头：`Deprecation` + `Sunset` + `Link`
+3. 文档站标 deprecated 横幅
+4. 通知所有消费者
+5. 给消费者迁移窗口（建议 90 天）
+6. 窗口期后返回 `410 Gone`
+7. 移除代码 + 文档
+
+---
+
+## 九、工具链汇总
+
+| 工具 | 用途 |
+|------|------|
+| openapi-generator 7.26.0 | 生成 DTO + API 接口 |
+| spectral | openapi.yaml 规范 lint |
+| oasdiff | 破坏性变更检测 |
+| portman | 生成带依赖脚本的 Postman 集合 |
+| newman | CI 跑 Postman 集合 |
+| wiremock | 模拟上游 HTTP 服务 |
+| mapstruct 1.6.0 | DTO ↔ Entity 映射 |
+| springdoc-openapi | 运行时 /v3/api-docs |
+| schemathesis | 基于 schema 的模糊测试 |
+| redocly / fern | 静态文档站生成 |
+
+---
+
+## 十、落地优先级
+
+| 阶段 | 内容 | 周期 |
+|------|------|------|
+| P0 | 下游 openapi.yaml + 代码生成 + MapStruct | 第 1 周 |
+| P1 | 上游快照 + Adapter 层 + WireMock 测试 | 第 2 周 |
+| P2 | Spectral + oasdiff + Portman 集合生成 | 第 3 周 |
+| P3 | CI 流水线 + Newman + 文档站 | 第 4 周 |
+| P4 | 消费者契约 + Pact + 版本矩阵治理 | 第 5-6 周 |
+
+---
+
+## 附录 A：核心原则速查
+
+| 原则 | 做法 |
+|------|------|
+| 单一真相源 | openapi.yaml 是合约，不是文档 |
+| 版本独立 | 每个服务、每个版本独立目录 |
+| 变更可追踪 | 所有修改走 PR + oasdiff |
+| 消费者优先 | 破坏性变更必须通知 + 给迁移方案 |
+| 产物自动生成 | 集合、文档、SDK 都是构建产物 |
+| 弃用有流程 | deprecated → sunset → retired |
+| 上下游分离 | 不同目录、不同生命周期 |
+| 上游变化不传染 | Adapter 层隔离 |
+| 上游 DTO 自动生成 | 从对方 openapi 生成 |
+| 测试双覆盖 | MockMvc（下游）+ WireMock（上游） |
+
+---
+
+## 附录 B：一句话总结
+
+> **下游契约是源码，上游契约是依赖，Adapter 是防火墙，CI 是守门员。所有东西从 openapi.yaml 生成，不手写重复结构，不手改 Postman 集合，不把上游 DTO 泄漏到领域层。**
